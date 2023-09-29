@@ -28,16 +28,14 @@ type Cell struct {
 type Row = map[int]*Cell
 type Matrix = map[int]Row
 type Game struct {
-	rows Matrix
+	width  int
+	height int
+	rows   Matrix
 }
 
-func NewGame() *Game {
-	game := &Game{rows: make(Matrix)}
+func NewGame(width, height int) *Game {
+	game := &Game{rows: make(Matrix), width: width, height: height}
 	return game
-}
-
-func (g *Game) Matrix() Matrix {
-	return g.rows
 }
 
 func (g *Game) initialiseSeed(seed [][]int) {
@@ -48,6 +46,16 @@ func (g *Game) initialiseSeed(seed [][]int) {
 			g.rows[row] = make(Row)
 		}
 		g.rows[row][col] = &Cell{isLive: true, liveNeighbours: 0}
+	}
+}
+
+func (g *Game) drawState(s tcell.Screen) {
+	for row, cols := range g.rows {
+		for col, cell := range cols {
+			if cell.isLive {
+				s.SetContent(col, row, ' ', nil, aliveCellStyle)
+			}
+		}
 	}
 }
 
@@ -69,16 +77,7 @@ func (g *Game) selectLiveCellsForNextIteration() {
 	}
 }
 
-func (g *Game) increaseCellNeighbours(rows Matrix, row, col int) {
-	isLive := g.rows[row] != nil && g.rows[row][col] != nil
-	if rows[row][col] == nil {
-		rows[row][col] = &Cell{isLive: isLive, liveNeighbours: 1}
-	} else {
-		rows[row][col].liveNeighbours++
-	}
-}
-
-func (g *Game) calculateNextIterationNeighbours(width, height int) {
+func (g *Game) prepareNextIteration() {
 	nextRows := make(Matrix)
 	for row, cols := range g.rows {
 		for col := range cols {
@@ -86,6 +85,7 @@ func (g *Game) calculateNextIterationNeighbours(width, height int) {
 			rowDown := row + 1
 			colLeft := col - 1
 			colRight := col + 1
+
 			if nextRows[row] == nil {
 				nextRows[row] = make(Row)
 			}
@@ -95,67 +95,55 @@ func (g *Game) calculateNextIterationNeighbours(width, height int) {
 			if nextRows[rowDown] == nil {
 				nextRows[rowDown] = make(Row)
 			}
-
 			if nextRows[row][col] == nil {
 				nextRows[row][col] = &Cell{isLive: true, liveNeighbours: 0}
 			}
-			if rowUp >= 0 {
-				g.increaseCellNeighbours(nextRows, rowUp, col)
-				if colLeft >= 0 {
-					g.increaseCellNeighbours(nextRows, rowUp, colLeft)
+
+			adjacentCells := [][]int{{rowUp, col}, {rowUp, colLeft}, {rowUp, colRight}, {rowDown, col}, {rowDown, colLeft}, {rowDown, colRight}, {row, colLeft}, {row, colRight}}
+
+			for _, c := range adjacentCells {
+				adjacentRow := c[0]
+				adjacentCol := c[1]
+
+				if adjacentRow >= 0 && adjacentRow <= g.height && adjacentCol >= 0 && adjacentCol <= g.width {
+					if nextRows[adjacentRow][adjacentCol] == nil {
+						isLive := g.rows[adjacentRow] != nil && g.rows[adjacentRow][adjacentCol] != nil && g.rows[adjacentRow][adjacentCol].isLive
+						nextRows[adjacentRow][adjacentCol] = &Cell{isLive: isLive, liveNeighbours: 1}
+					} else {
+						nextRows[adjacentRow][adjacentCol].liveNeighbours++
+					}
 				}
-				if colRight <= width {
-					g.increaseCellNeighbours(nextRows, rowUp, colRight)
-				}
-			}
-			if rowDown <= height {
-				g.increaseCellNeighbours(nextRows, rowDown, col)
-				if colLeft >= 0 {
-					g.increaseCellNeighbours(nextRows, rowDown, colLeft)
-				}
-				if colRight <= width {
-					g.increaseCellNeighbours(nextRows, rowDown, colRight)
-				}
-			}
-			if colLeft >= 0 {
-				g.increaseCellNeighbours(nextRows, row, colLeft)
-			}
-			if colRight <= width {
-				g.increaseCellNeighbours(nextRows, row, colRight)
 			}
 		}
 	}
+
 	g.rows = nextRows
+	g.selectLiveCellsForNextIteration()
 }
 
 var aliveCellStyle = tcell.StyleDefault.Background(tcell.ColorTomato).Foreground(tcell.ColorTomato)
 
-const statsRows = 5
+const metricsRows = 5
 
 func main() {
-	seed := [][]int{{1, 1}, {2, 1}, {2, 5}, {2, 7}, {8, 7}, {8, 9}, {8, 8}, {3, 2}, {3, 6}, {3, 7}, {8, 2}, {8, 3}, {8, 4}, {9, 5}, {9, 4}, {9, 2}}
-	game := NewGame()
-	game.initialiseSeed(seed)
-
 	s, err := NewScreen()
 	if err != nil {
 		log.Fatalf("error initialising screen: %+v", err)
 	}
 	width, height := s.Size()
 
+	seed := [][]int{{1, 1}, {2, 1}, {2, 5}, {2, 7}, {8, 7}, {8, 9}, {8, 8}, {3, 2}, {3, 6}, {3, 7}, {8, 2}, {8, 3}, {8, 4}, {9, 5}, {9, 4}, {9, 2}}
+
+	game := NewGame(width, height-metricsRows)
+	game.initialiseSeed(seed)
+
 	ticker := time.NewTicker(300 * time.Millisecond)
 	for range ticker.C {
 		s.Clear()
 
-		for row, cols := range game.Matrix() {
-			for col, cell := range cols {
-				if cell.isLive {
-					s.SetContent(col, row, ' ', nil, aliveCellStyle)
-				}
-			}
-		}
-		game.calculateNextIterationNeighbours(width, height-statsRows)
-		game.selectLiveCellsForNextIteration()
+		game.drawState(s)
+
+		game.prepareNextIteration()
 		PrintMemUsage(s)
 		s.Show()
 	}
